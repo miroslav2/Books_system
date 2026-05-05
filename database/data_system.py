@@ -27,8 +27,8 @@ class Data_system:
             print(f'SQL error: {e}')
 
     def disconnect(self):
-        self.conn.close()
         self.cursor.close()
+        self.conn.close()
         print('SQL disconnected')
 
     def _execute(self, query, params=None, fetch=False):
@@ -65,8 +65,8 @@ class Data_system:
         rows = self._execute("SELECT * FROM shelves ORDER BY id", fetch=True)
         return pd.DataFrame(rows, columns=["id", "name"])
     
-    def insert_shelves(self, name: str):
-        self._execute("INSERT INTO shelves (name) VALUES (%s)", (name,))
+    def insert_shelves(self, name: str, apartment_id: int):
+        self._execute("INSERT INTO shelves (name, apartment_id) VALUES (%s, %s)", (name, apartment_id))
     
     def update_shelves(self, shelves_id: int, name: str):
         self._execute("UPDATE shelves SET name=%s WHERE id=%s", (name, shelves_id))
@@ -80,13 +80,13 @@ class Data_system:
         rows = self._execute("SELECT * FROM shelf_levels ORDER BY id", fetch=True)
         return pd.DataFrame(rows, columns=["id", "name"])
     
-    def insert_shelf_levels(self, name: str):
-        self._execute("INSERT INTO shelf_levels (name) VALUES (%s)", (name,))
+    def insert_shelf_levels(self, name: str, shelf_id: int):
+        self._execute("INSERT INTO shelf_levels (name, shelf_id) VALUES (%s, %s)", (name, shelf_id))
     
     def update_shelf_levels(self, shelf_levels_id: int, name: str):
         self._execute("UPDATE shelf_levels SET name=%s WHERE id=%s", (name, shelf_levels_id))
     
-    def delete_shelves(self, shelf_levels_id: int):
+    def delete_shelf_levels(self, shelf_levels_id: int):
         self._execute("DELETE FROM shelf_levels WHERE id=%s", (shelf_levels_id,))
 
 # ---------------books---------------
@@ -136,6 +136,13 @@ class Data_system:
 
 # ---------------statistics---------------
 
+    def stats_by_title(self) -> pd.DataFrame:
+        rows = self._execute(
+            "SELECT title, COUNT(*) as count FROM books GROUP BY title ORDER BY count DESC",
+            fetch=True
+        )
+        return pd.DataFrame(rows, columns=["title", "count"])
+    
     def stats_by_author(self) -> pd.DataFrame:
         rows = self._execute(
             "SELECT author, COUNT(*) as count FROM books GROUP BY author ORDER BY count DESC",
@@ -152,8 +159,34 @@ class Data_system:
 
     def stats_by_year(self) -> pd.DataFrame:
         rows = self._execute(
-            "SELECT publication_year, COUNT(*) as count FROM books "
-            "GROUP BY publication_year ORDER BY publication_year",
+            "SELECT publication_year, COUNT(*) as count FROM books WHERE publication_year IS NOT NULL GROUP BY publication_year ORDER BY publication_year"
+            , fetch=True)
+        return pd.DataFrame(rows, columns=["year", "count"])
+    
+    def stats_by_publisher(self) -> pd.DataFrame:
+        rows = self._execute(
+            "SELECT publisher, COUNT(*) as count FROM books WHERE publisher IS NOT NULL GROUP BY publisher ORDER BY count DESC",
             fetch=True
         )
-        return pd.DataFrame(rows, columns=["year", "count"])
+        return pd.DataFrame(rows, columns=["publisher", "count"])
+    
+    def stats_by_city(self) -> pd.DataFrame:
+        rows = self._execute(
+            "SELECT city, COUNT(*) as count FROM books WHERE city IS NOT NULL GROUP BY city ORDER BY count DESC",
+            fetch=True
+        )
+        return pd.DataFrame(rows, columns=["city", "count"])
+    
+    def stats_by_stile(self) -> pd.DataFrame:
+        rows = self._execute(
+            "SELECT stile, COUNT(*) as count FROM books WHERE stile IS NOT NULL GROUP BY stile ORDER BY count DESC",
+            fetch=True
+        )
+        return pd.DataFrame(rows, columns=["stile", "count"])
+    
+    def stats_by_stile_percent(self) -> pd.DataFrame:
+        rows = self._execute(
+            "SELECT stile, ROUND(COUNT(*) * 100.0 / (SELECT COUNT(*) FROM books WHERE stile IS NOT NULL), 1) as percent FROM books WHERE stile IS NOT NULL GROUP BY stile ORDER BY percent DESC",
+            fetch=True
+        )
+        return pd.DataFrame(rows, columns=["stile", "percent"])
