@@ -1,4 +1,4 @@
-from data_system import Data_system
+from database.data_system import Data_system
 if __name__ == "__main__":
     data = Data_system()
     data.connect()
