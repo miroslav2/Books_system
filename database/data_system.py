@@ -26,6 +26,20 @@ class Data_system:
         except psycopg2.Error as e:
             print(f'SQL error: {e}')
 
+    def connect_with(self, host: str, dbname: str,
+                     user: str, password: str, port: int = 5432):
+        """Подключение с параметрами из окна входа."""
+        self.host   = host
+        self.dbname = dbname
+        self._do_connect(host=host, port=port,
+                         dbname=dbname, user=user, password=password)
+ 
+    def _do_connect(self, **kwargs):
+        self.conn   = psycopg2.connect(**kwargs)
+        self.cursor = self.conn.cursor()
+        print("SQL connected")
+
+
     def disconnect(self):
         self.cursor.close()
         self.conn.close()
@@ -63,13 +77,19 @@ class Data_system:
 
     def get_shelves(self) -> pd.DataFrame:
         rows = self._execute("SELECT * FROM shelves ORDER BY id", fetch=True)
-        return pd.DataFrame(rows, columns=["id", "name"])
+        return pd.DataFrame(rows, columns=["id", "name", "apartment_id"])
     
     def insert_shelves(self, name: str, apartment_id: int):
         self._execute("INSERT INTO shelves (name, apartment_id) VALUES (%s, %s)", (name, apartment_id))
     
-    def update_shelves(self, shelves_id: int, name: str):
-        self._execute("UPDATE shelves SET name=%s WHERE id=%s", (name, shelves_id))
+    def update_shelves(self, shelves_id: int, name: str, apartment_id: int = None):
+        if apartment_id is not None:
+            self._execute(
+                "UPDATE shelves SET name=%s, apartment_id=%s WHERE id=%s",
+                (name, apartment_id, shelves_id)
+            )
+        else:
+            self._execute("UPDATE shelves SET name=%s WHERE id=%s", (name, shelves_id))
     
     def delete_shelves(self, shelves_id: int):
         self._execute("DELETE FROM shelves WHERE id=%s", (shelves_id,))
@@ -78,13 +98,19 @@ class Data_system:
 
     def get_shelf_levels(self) -> pd.DataFrame:
         rows = self._execute("SELECT * FROM shelf_levels ORDER BY id", fetch=True)
-        return pd.DataFrame(rows, columns=["id", "name"])
+        return pd.DataFrame(rows, columns=["id", "name", "shelf_id"])
     
     def insert_shelf_levels(self, name: str, shelf_id: int):
         self._execute("INSERT INTO shelf_levels (name, shelf_id) VALUES (%s, %s)", (name, shelf_id))
     
-    def update_shelf_levels(self, shelf_levels_id: int, name: str):
-        self._execute("UPDATE shelf_levels SET name=%s WHERE id=%s", (name, shelf_levels_id))
+    def update_shelf_levels(self, shelf_levels_id: int, name: str, shelf_id: int = None):
+        if shelf_id is not None:
+            self._execute(
+                "UPDATE shelf_levels SET name=%s, shelf_id=%s WHERE id=%s",
+                (name, shelf_id, shelf_levels_id)
+            )
+        else:
+            self._execute("UPDATE shelf_levels SET name=%s WHERE id=%s", (name, shelf_levels_id))
     
     def delete_shelf_levels(self, shelf_levels_id: int):
         self._execute("DELETE FROM shelf_levels WHERE id=%s", (shelf_levels_id,))
