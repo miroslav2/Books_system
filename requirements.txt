@@ -1,0 +1,5 @@
+PyQt6
+psycopg2
+pandas
+matplotlib
+python-dotenv
