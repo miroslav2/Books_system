@@ -143,6 +143,7 @@ class StatisticTab(QWidget):
         "По городам":           ("bar",  "stats_by_city",          "city",      "count"),
         "По стилям":            ("pie",  "stats_by_stile",         "stile",     "count"),
         "По стилям (%)":        ("pie",  "stats_by_stile_percent", "stile",     "percent"),
+        "Выданные по жанрам":   ("pie",  "stats_by_loaned_stile",  "stile",     "percent"),
     }
 
     def __init__(self, db: Data_system, parent=None):

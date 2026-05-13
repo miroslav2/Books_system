@@ -1,10 +1,10 @@
-from PyQt6.QtCore import Qt, QSortFilterProxyModel, QAbstractTableModel, QModelIndex
+from PyQt6.QtCore import Qt, QSortFilterProxyModel, QAbstractTableModel, QModelIndex, QDate, QRegularExpression
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QLineEdit, QPushButton, QTableView,
     QHeaderView, QDialog, QFormLayout, QComboBox,
     QSpinBox, QMessageBox, QFrame, QAbstractItemView,
-    QSplitter, QStatusBar, QTabWidget
+    QSplitter, QStatusBar, QTabWidget, QDateEdit
 )
 from PyQt6.QtGui import QColor
 import pandas as pd
@@ -30,9 +30,17 @@ class PandasModel(QAbstractTableModel):
     def data(self, index, role=Qt.ItemDataRole.DisplayRole):
         if not index.isValid():
             return None
+        val = self._df.iloc[index.row(), index.column()]
         if role == Qt.ItemDataRole.DisplayRole:
-            val = self._df.iloc[index.row(), index.column()]
             return "" if pd.isna(val) else str(val)
+        if role == Qt.ItemDataRole.ForegroundRole:
+            try:
+                if self._df.iloc[index.row(), 13]:  # is_loaned
+                    from PyQt6.QtGui import QColor as _C
+                    return _C("#ef5350")
+            except Exception:
+                pass
+            return None
         if role == Qt.ItemDataRole.TextAlignmentRole:
             return Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft
         return None
@@ -214,6 +222,205 @@ class BookDialog(QDialog):
         self.accept()
 
 
+
+
+# ──────────────────────────────────────────────
+#  Диалог выдачи / возврата книги
+# ──────────────────────────────────────────────
+class LoanDialog(QDialog):
+    DATE_FMT_DISPLAY = "dd.MM.yyyy"   # формат для пользователя
+    DATE_FMT_SQL     = "yyyy-MM-dd"   # формат для БД
+
+    def __init__(self, db, book: pd.Series, parent=None):
+        super().__init__(parent)
+        self.db        = db
+        self.book      = book
+        self.book_id   = int(book["ID"])
+        self.is_loaned = bool(book.get("is_loaned", False))
+        self.setWindowTitle("Вернуть книгу" if self.is_loaned else "Выдать книгу")
+        self.setMinimumWidth(440)
+        self.setModal(True)
+        self._build_ui()
+        if self.is_loaned:
+            self._fill_active_loan()
+
+    # ── Вспомогательные методы дат ────────────
+    @staticmethod
+    def _today_str() -> str:
+        return QDate.currentDate().toString("dd.MM.yyyy")
+
+    @staticmethod
+    def _date_field(placeholder: str) -> QLineEdit:
+        """QLineEdit с маской для ввода даты dd.MM.yyyy."""
+        edit = QLineEdit()
+        edit.setInputMask("99.99.9999;_")
+        edit.setPlaceholderText(placeholder)
+        edit.setMinimumHeight(34)
+        edit.setMaximumWidth(140)
+        return edit
+
+    @staticmethod
+    def _to_sql(date_str: str):
+        """Конвертация dd.MM.yyyy → yyyy-MM-dd для БД. None если пусто."""
+        s = date_str.replace("_", "").strip()
+        if len(s) < 10:
+            return None
+        d = QDate.fromString(s, "dd.MM.yyyy")
+        return d.toString("yyyy-MM-dd") if d.isValid() else None
+
+    def _build_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(24, 20, 24, 20)
+        layout.setSpacing(14)
+
+        title_lbl = QLabel(
+            f"📖  {self.book.get('Название', '')}  —  {self.book.get('Автор', '')}"
+        )
+        title_lbl.setWordWrap(True)
+        title_lbl.setStyleSheet("font-weight: bold; font-size: 13px;")
+        layout.addWidget(title_lbl)
+
+        div = QFrame()
+        div.setFrameShape(QFrame.Shape.HLine)
+        div.setStyleSheet("background-color: #4a4a4a; max-height:1px;")
+        layout.addWidget(div)
+
+        form = QFormLayout()
+        form.setSpacing(10)
+        form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
+
+        if not self.is_loaned:
+            # ── Режим выдачи ──────────────────
+            self.edit_borrower = QLineEdit()
+            self.edit_borrower.setPlaceholderText("Имя и фамилия")
+            self.edit_borrower.setMinimumHeight(34)
+            form.addRow("Кому *", self.edit_borrower)
+
+            self.edit_loaned_at = self._date_field("дд.мм.гггг")
+            self.edit_loaned_at.setText(self._today_str())
+            form.addRow("Дата выдачи *", self.edit_loaned_at)
+
+            self.edit_due = self._date_field("дд.мм.гггг")
+            self.edit_due.setText(
+                QDate.currentDate().addDays(14).toString("dd.MM.yyyy")
+            )
+            form.addRow("Вернуть до", self.edit_due)
+
+            self.edit_note = QLineEdit()
+            self.edit_note.setPlaceholderText("Необязательно")
+            self.edit_note.setMinimumHeight(34)
+            form.addRow("Заметка", self.edit_note)
+
+        else:
+            # ── Режим возврата: инфо об активной выдаче ──
+            self.lbl_borrower = QLabel()
+            self.lbl_borrower.setStyleSheet("color: #e95420; font-weight: bold;")
+            form.addRow("На руках у:", self.lbl_borrower)
+
+            self.lbl_loaned_at = QLabel()
+            form.addRow("Выдана:", self.lbl_loaned_at)
+
+            self.lbl_due = QLabel()
+            form.addRow("Вернуть до:", self.lbl_due)
+
+            self.lbl_note = QLabel()
+            self.lbl_note.setWordWrap(True)
+            form.addRow("Заметка:", self.lbl_note)
+
+            form.addRow(QLabel(""))
+
+            self.edit_returned_at = self._date_field("дд.мм.гггг")
+            self.edit_returned_at.setText(self._today_str())
+            form.addRow("Дата возврата *", self.edit_returned_at)
+
+        layout.addLayout(form)
+
+        btn_history = QPushButton("🕐  История выдач")
+        btn_history.setObjectName("iconBtn")
+        btn_history.clicked.connect(self._show_history)
+        layout.addWidget(btn_history)
+
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(8)
+        label = "Отметить возврат" if self.is_loaned else "Выдать книгу"
+        btn_ok = QPushButton(label)
+        btn_ok.setObjectName("connectBtn")
+        btn_ok.setMinimumHeight(38)
+        btn_ok.clicked.connect(self._on_ok)
+
+        btn_cancel = QPushButton("Отмена")
+        btn_cancel.setObjectName("quitBtn")
+        btn_cancel.setMinimumHeight(38)
+        btn_cancel.clicked.connect(self.reject)
+
+        btn_row.addWidget(btn_ok)
+        btn_row.addWidget(btn_cancel)
+        layout.addLayout(btn_row)
+
+    def _fill_active_loan(self):
+        df = self.db.get_active_loan(self.book_id)
+        if df.empty:
+            return
+        row = df.iloc[0]
+        self.lbl_borrower.setText(str(row["borrower_name"]))
+        self.lbl_loaned_at.setText(str(row["loaned_at"]))
+        due = row["due_date"]
+        self.lbl_due.setText(str(due) if due and str(due) != "None" else "—")
+        note = row["note"]
+        self.lbl_note.setText(str(note) if note and str(note) != "None" else "—")
+
+    def _show_history(self):
+        df = self.db.get_loan_history(self.book_id)
+        dlg = QDialog(self)
+        dlg.setWindowTitle("История выдач")
+        dlg.setMinimumSize(640, 300)
+        layout = QVBoxLayout(dlg)
+        layout.setContentsMargins(16, 16, 16, 16)
+        if df.empty:
+            layout.addWidget(QLabel("История выдач пуста."))
+        else:
+            model = PandasModel(df)
+            table = QTableView()
+            table.setModel(model)
+            table.setAlternatingRowColors(True)
+            table.verticalHeader().setVisible(False)
+            table.horizontalHeader().setStretchLastSection(True)
+            table.horizontalHeader().setSectionResizeMode(
+                QHeaderView.ResizeMode.ResizeToContents
+            )
+            table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+            layout.addWidget(table)
+        btn_close = QPushButton("Закрыть")
+        btn_close.setObjectName("quitBtn")
+        btn_close.setMinimumHeight(36)
+        btn_close.clicked.connect(dlg.accept)
+        layout.addWidget(btn_close)
+        dlg.exec()
+
+    def _on_ok(self):
+        try:
+            if not self.is_loaned:
+                borrower = self.edit_borrower.text().strip()
+                if not borrower:
+                    QMessageBox.warning(self, "Ошибка", "Введите имя получателя.")
+                    return
+                loaned_at = self._to_sql(self.edit_loaned_at.text())
+                if not loaned_at:
+                    QMessageBox.warning(self, "Ошибка", "Введите корректную дату выдачи.")
+                    return
+                due_date = self._to_sql(self.edit_due.text())
+                note     = self.edit_note.text().strip() or None
+                self.db.lend_book(self.book_id, borrower, loaned_at, due_date, note)
+            else:
+                returned_at = self._to_sql(self.edit_returned_at.text())
+                if not returned_at:
+                    QMessageBox.warning(self, "Ошибка", "Введите корректную дату возврата.")
+                    return
+                self.db.return_book(self.book_id, returned_at)
+        except Exception as e:
+            QMessageBox.critical(self, "Ошибка БД", str(e))
+            return
+        self.accept()
 
 # ──────────────────────────────────────────────
 #  Диалог управления хранилищем
@@ -520,9 +727,9 @@ class StorageDialog(QDialog):
 COLUMN_LABELS = [
     "ID", "Название", "Автор", "Год", "Издательство",
     "Город", "Стиль", "Стр.", "ISBN", "Язык",
-    "Уровень полки", "Шкаф", "Квартира"
+    "Уровень полки", "Шкаф", "Квартира", "is_loaned"
 ]
-HIDDEN_COLUMNS = {0, 8}   # id, isbn
+HIDDEN_COLUMNS = {0, 8, 13}   # id, isbn, is_loaned (raw bool)
 
 
 class BooksWindow(QMainWindow):
@@ -614,6 +821,7 @@ class BooksWindow(QMainWindow):
             ("Язык",           9),
             ("Шкаф",          11),
             ("Квартира",      12),
+            ("Выданные",      13),  # is_loaned == True
         ]
         for label, _ in self._search_options:
             self.search_combo.addItem(label)
@@ -628,6 +836,11 @@ class BooksWindow(QMainWindow):
         btn_add.setObjectName("connectBtn")
         btn_add.setMinimumHeight(36)
         btn_add.clicked.connect(self._on_add)
+
+        self.btn_loan = QPushButton("📖  Выдать")
+        self.btn_loan.setObjectName("secondaryBtn")
+        self.btn_loan.setMinimumHeight(36)
+        self.btn_loan.clicked.connect(self._on_loan)
 
         btn_edit = QPushButton("✎  Изменить")
         btn_edit.setObjectName("secondaryBtn")
@@ -649,6 +862,7 @@ class BooksWindow(QMainWindow):
         toolbar.addWidget(self.search_combo)
         toolbar.addWidget(self.search_input, stretch=1)
         toolbar.addWidget(btn_add)
+        toolbar.addWidget(self.btn_loan)
         toolbar.addWidget(btn_edit)
         toolbar.addWidget(btn_delete)
         toolbar.addWidget(btn_refresh)
@@ -674,6 +888,7 @@ class BooksWindow(QMainWindow):
             QHeaderView.ResizeMode.Interactive
         )
         self.table.doubleClicked.connect(self._on_edit)
+        self.table.clicked.connect(lambda _: self._update_loan_btn())
         left_layout.addWidget(self.table)
 
         # Счётчик
@@ -715,8 +930,12 @@ class BooksWindow(QMainWindow):
 
     def _on_search(self, text: str):
         _, col = self._search_options[self.search_combo.currentIndex()]
-        self._proxy.setFilterKeyColumn(col)
-        self._proxy.setFilterFixedString(text)
+        if col == 13:  # «Выданные» — показать только is_loaned == True
+            self._proxy.setFilterKeyColumn(13)
+            self._proxy.setFilterFixedString("True")
+        else:
+            self._proxy.setFilterKeyColumn(col)
+            self._proxy.setFilterFixedString(text)
         self.lbl_count.setText(f"Найдено: {self._proxy.rowCount()}")
 
     def _selected_book(self) -> pd.Series | None:
@@ -725,6 +944,30 @@ class BooksWindow(QMainWindow):
             return None
         source_row = self._proxy.mapToSource(indexes[0]).row()
         return self._model.get_row(source_row)
+
+    # ── Выдача / возврат ─────────────────────
+    def _on_loan(self):
+        book = self._selected_book()
+        if book is None:
+            QMessageBox.information(self, "Выбор", "Выберите книгу.")
+            return
+        dlg = LoanDialog(self.db, book, parent=self)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            self._load_books()
+            if self._stat_visible:
+                self.stat_panel.refresh()
+
+    def _update_loan_btn(self):
+        """Менять подпись кнопки по статусу выбранной книги."""
+        book = self._selected_book()
+        if book is None or not book.get("is_loaned", False):
+            self.btn_loan.setText("📖  Выдать")
+            self.btn_loan.setObjectName("secondaryBtn")
+        else:
+            self.btn_loan.setText("↩  Вернуть")
+            self.btn_loan.setObjectName("dangerBtn")
+        self.btn_loan.style().unpolish(self.btn_loan)
+        self.btn_loan.style().polish(self.btn_loan)
 
     # ── Хранилище ─────────────────────────
     def _on_storage(self):

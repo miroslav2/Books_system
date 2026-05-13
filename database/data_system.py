@@ -122,7 +122,8 @@ class Data_system:
             SELECT b.id, b.title, b.author, b.publication_year,
                    b.publisher, b.city, b.stile, b.pages,
                    b.isbn, b.language,
-                   sl.name as shelf_level, s.name as shelf, a.name as apartment
+                   sl.name as shelf_level, s.name as shelf, a.name as apartment,
+                   b.is_loaned
             FROM books b
             JOIN shelf_levels sl ON b.shelf_level_id = sl.id
             JOIN shelves s       ON sl.shelf_id = s.id
@@ -137,7 +138,7 @@ class Data_system:
 
         columns = ["id", "title", "author", "year", "publisher",
                    "city", "style", "pages", "isbn", "language",
-                   "shelf_level", "shelf", "apartment"]
+                   "shelf_level", "shelf", "apartment", "is_loaned"]
         return pd.DataFrame(rows, columns=columns)
 
     def insert_book(self, title, author, year, publisher, city,
@@ -159,6 +160,74 @@ class Data_system:
 
     def delete_book(self, book_id: int):
         self._execute("DELETE FROM books WHERE id=%s", (book_id,))
+
+
+# ---------------loans---------------
+
+    def lend_book(self, book_id: int, borrower_name: str,
+                  loaned_at: str, due_date: str = None, note: str = None):
+        """Выдать книгу: создать запись в loans и пометить книгу."""
+        self._execute("""
+            INSERT INTO loans (book_id, borrower_name, loaned_at, due_date, note)
+            VALUES (%s, %s, %s, %s, %s)
+        """, (book_id, borrower_name, loaned_at, due_date or None, note or None))
+        self._execute(
+            "UPDATE books SET is_loaned = TRUE WHERE id = %s", (book_id,)
+        )
+
+    def return_book(self, book_id: int, returned_at: str):
+        """Вернуть книгу: закрыть активную выдачу и снять пометку."""
+        self._execute("""
+            UPDATE loans
+            SET returned_at = %s
+            WHERE book_id = %s AND returned_at IS NULL
+        """, (returned_at, book_id))
+        self._execute(
+            "UPDATE books SET is_loaned = FALSE WHERE id = %s", (book_id,)
+        )
+
+    def get_active_loan(self, book_id: int):
+        """Текущая (незакрытая) выдача книги."""
+        import pandas as pd
+        rows = self._execute("""
+            SELECT id, borrower_name, loaned_at, due_date, note
+            FROM loans
+            WHERE book_id = %s AND returned_at IS NULL
+            ORDER BY loaned_at DESC LIMIT 1
+        """, (book_id,), fetch=True)
+        return pd.DataFrame(rows, columns=["id", "borrower_name",
+                                           "loaned_at", "due_date", "note"])
+
+    def get_loan_history(self, book_id: int):
+        """Полная история выдач книги."""
+        import pandas as pd
+        rows = self._execute("""
+            SELECT borrower_name, loaned_at, due_date, returned_at, note
+            FROM loans
+            WHERE book_id = %s
+            ORDER BY loaned_at DESC
+        """, (book_id,), fetch=True)
+        return pd.DataFrame(rows, columns=["Кому", "Выдана", "Вернуть до",
+                                           "Возвращена", "Заметка"])
+
+    def stats_by_loaned_stile(self):
+        """Жанры выданных книг — для круговой диаграммы в статистике."""
+        import pandas as pd
+        rows = self._execute("""
+            SELECT b.stile,
+                   ROUND(COUNT(*) * 100.0 /
+                         (SELECT COUNT(*) FROM loans l2
+                          JOIN books b2 ON l2.book_id = b2.id
+                          WHERE l2.returned_at IS NULL
+                            AND b2.stile IS NOT NULL), 1) AS percent
+            FROM loans l
+            JOIN books b ON l.book_id = b.id
+            WHERE l.returned_at IS NULL
+              AND b.stile IS NOT NULL
+            GROUP BY b.stile
+            ORDER BY percent DESC
+        """, fetch=True)
+        return pd.DataFrame(rows, columns=["stile", "percent"])
 
 # ---------------statistics---------------
 
