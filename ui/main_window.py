@@ -19,7 +19,7 @@ SETTINGS_FILE = os.path.join(os.path.expanduser("~"), ".books_data_settings.json
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("books_data — Подключение")
+        self.setWindowTitle("Home_library — Подключение")
         self.setMinimumSize(420, 780)
         self.setMaximumWidth(420)
 

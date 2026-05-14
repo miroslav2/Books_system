@@ -736,7 +736,7 @@ class BooksWindow(QMainWindow):
     def __init__(self, db: Data_system):
         super().__init__()
         self.db = db
-        self.setWindowTitle(f"books_data — {db.dbname}  @  {db.host}")
+        self.setWindowTitle(f"Home_library — {db.dbname}  @  {db.host}")
         self.setMinimumSize(1000, 640)
         self.resize(1200, 720)
 
